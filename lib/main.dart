@@ -1,122 +1,258 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
+import 'dart:ui';
 
-void main() {
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:android_intent_plus/android_intent.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
+
+const int kAlarmId = 1005;
+const String kApiUrl = 'http://44.200.70.230:8000/Athena/api/v1/login/administrador';
+const String kPayload =
+    '{"username": "roberto@ventrix.com.br","password": "Amor","documento": "662.963.746-15"}';
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> _initNotifications() async {
+  const AndroidInitializationSettings android =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const DarwinInitializationSettings ios = DarwinInitializationSettings();
+  const InitializationSettings initSettings =
+      InitializationSettings(android: android, iOS: ios);
+  await flutterLocalNotificationsPlugin.initialize(initSettings);
+}
+
+Future<void> _notify(String title, String body) async {
+  const AndroidNotificationDetails android = AndroidNotificationDetails(
+    'api_channel',
+    'API',
+    importance: Importance.defaultImportance,
+    priority: Priority.defaultPriority,
+  );
+  const DarwinNotificationDetails ios = DarwinNotificationDetails();
+  const NotificationDetails details =
+      NotificationDetails(android: android, iOS: ios);
+
+  await flutterLocalNotificationsPlugin.show(
+    DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    title,
+    body,
+    details,
+  );
+}
+
+DateTime _next00h05() {
+  final DateTime now = DateTime.now();
+  DateTime target = DateTime(now.year, now.month, now.day, 0, 5);
+  if (!target.isAfter(now)) {
+    target = target.add(const Duration(days: 1));
+  }
+  return target;
+}
+
+Future<DateTime?> scheduleExactAt00h05() async {
+  final DateTime when = _next00h05();
+  final bool scheduled = await AndroidAlarmManager.oneShotAt(
+            when,
+            kAlarmId,
+            alarmCallback,
+            exact: true,
+            wakeup: true,
+            allowWhileIdle: true,
+            rescheduleOnReboot: true,
+          ) ??
+          false;
+
+  return scheduled ? when : null;
+}
+
+Future<void> openExactAlarmSettings() async {
+  if (!Platform.isAndroid) return;
+  const AndroidIntent intent = AndroidIntent(
+    action: 'android.settings.REQUEST_SCHEDULE_EXACT_ALARM',
+  );
+
+  await intent.launch();
+}
+
+@pragma('vm:entry-point')
+Future<void> alarmCallback() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+
+  const AndroidInitializationSettings android =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const DarwinInitializationSettings ios = DarwinInitializationSettings();
+  const InitializationSettings initSettings =
+      InitializationSettings(android: android, iOS: ios);
+
+  await flutterLocalNotificationsPlugin.initialize(initSettings);
+
+  try {
+    await _notify('Comando enviado', 'Chamando a API configurada.');
+
+    final http.Response resp = await http.post(
+      Uri.parse(kApiUrl),
+      headers: {'Content-Type': 'application/json'},
+      body:{
+            'username': "roberto@ventrix.com.br",
+            'password': "Amor",
+            'documento': "662.963.746-15"
+          },
+    );
+
+    final String bodyPreview =
+        resp.body.length <= 120 ? resp.body : '${resp.body.substring(0, 120)}...';
+
+    await _notify('Resposta recebida', 'Status: ${resp.statusCode} - $bodyPreview');
+  } catch (e) {
+    await _notify('Falha ao enviar', e.toString());
+  } finally {
+    await scheduleExactAt00h05();
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _initNotifications();
+
+  if (Platform.isAndroid) {
+    await AndroidAlarmManager.initialize();
+  }
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Auto Server App',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const SchedulerPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class SchedulerPage extends StatefulWidget {
+  const SchedulerPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<SchedulerPage> createState() => _SchedulerPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _SchedulerPageState extends State<SchedulerPage> {
+  DateTime? _nextTrigger;
+  String _status = 'Preparando agendamento...';
+  bool _isScheduling = false;
 
-  void _incrementCounter() {
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isAndroid) {
+      _schedule();
+    } else {
+      _status = 'Agendamento disponivel apenas no Android.';
+    }
+  }
+
+  Future<void> _schedule() async {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _isScheduling = true;
+      _nextTrigger = _next00h05();
+      _status = 'Agendando para ${_formatDateTime(_nextTrigger!)}';
     });
+
+    final DateTime? scheduledAt = await scheduleExactAt00h05();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isScheduling = false;
+      if (scheduledAt != null) {
+        _nextTrigger = scheduledAt;
+        _status = 'Proximo disparo agendado para ${_formatDateTime(scheduledAt)}';
+      } else {
+        _status = 'Nao foi possivel agendar. Verifique as permissoes.';
+      }
+    });
+  }
+
+  Future<void> _openSettings() async {
+    await openExactAlarmSettings();
+  }
+
+  Future<void> _runNow() async {
+    setState(() {
+      _status = 'Executando agora...';
+    });
+
+    await alarmCallback();
+
+    if (!mounted) return;
+    setState(() {
+      _status = 'Comando executado manualmente. Novo agendamento configurado.';
+      _nextTrigger = _next00h05();
+    });
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    final String day = twoDigits(dateTime.day);
+    final String month = twoDigits(dateTime.month);
+    final String hour = twoDigits(dateTime.hour);
+    final String minute = twoDigits(dateTime.minute);
+    return '$day/$month/${dateTime.year} as $hour:$minute';
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Agendamento diario'),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: Padding(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              _status,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 16),
+            if (_nextTrigger != null)
+              Text(
+                'Proxima execucao: ${_formatDateTime(_nextTrigger!)}',
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: _isScheduling ? null : _schedule,
+              child: Text(_isScheduling ? 'Agendando...' : 'Reagendar 00:05'),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _openSettings,
+              child: const Text('Abrir permissoes de alarmes exatos'),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _runNow,
+              child: const Text('Executar agora (teste)'),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }

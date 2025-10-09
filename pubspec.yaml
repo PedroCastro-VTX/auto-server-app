@@ -28,6 +28,11 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  http: ^1.2.2
+  flutter_local_notifications: ^17.2.1
+  android_alarm_manager_plus: ^4.0.4
+  android_intent_plus: ^5.0.2
+
   flutter:
     sdk: flutter
 
