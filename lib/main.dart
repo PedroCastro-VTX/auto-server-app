@@ -1,471 +1,251 @@
 import 'dart:io';
 import 'dart:math';
-import 'dart:ui';
 
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
-import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:android_intent_plus/android_intent.dart';
 
-const int kAlarmId = 1005;
-const String kApiUrl =
+/// ================= CONFIG =================
+
+const String apiUrl =
     'http://44.200.70.230:8000/Athena/api/v1/login/administrador';
-const String kPayload =
-    '{"username": "roberto@ventrix.com.br","password": "Amor","documento": "662.963.746-15"}';
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+const String apiPayload =
+    '{"username":"roberto@ventrix.com.br","password":"Amor","documento":"662.963.746-15"}';
+
+const int alarmId = 777;
+const String prefsNextRun = 'next_run';
+
+final Random random = Random();
+
+final FlutterLocalNotificationsPlugin notifications =
     FlutterLocalNotificationsPlugin();
 
-const String kNextTriggerPrefsKey = 'next_trigger_iso';
-final Random _random = Random();
+/// ================= INIT =================
 
-class CommandResult {
-  const CommandResult.success({required this.statusCode, required this.preview})
-    : success = true,
-      errorMessage = null;
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
-  const CommandResult.failure(this.errorMessage)
-    : success = false,
-      statusCode = null,
-      preview = null;
+  await _initNotifications();
 
-  final bool success;
-  final int? statusCode;
-  final String? preview;
-  final String? errorMessage;
+  if (Platform.isAndroid) {
+    await AndroidAlarmManager.initialize();
+
+    await _scheduleExactAlarm();
+  }
+
+  runApp(const MyApp());
 }
 
-Future<void> _initNotifications() async {
-  const AndroidInitializationSettings android = AndroidInitializationSettings(
-    '@mipmap/ic_launcher',
+/// ================= NOTIFICATIONS =================
+
+Future<void> _initNotifications({bool requestPermission = true}) async {
+  const settings = InitializationSettings(
+    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    iOS: DarwinInitializationSettings(),
   );
-  const DarwinInitializationSettings ios = DarwinInitializationSettings();
-  const InitializationSettings initSettings = InitializationSettings(
-    android: android,
-    iOS: ios,
-  );
-  await flutterLocalNotificationsPlugin.initialize(initSettings);
 
-  final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
-      flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >();
-  await androidPlugin?.requestNotificationsPermission();
-}
-
-String _bodyPreview(String body) =>
-    body.length <= 120 ? body : '${body.substring(0, 120)}...';
-
-Future<CommandResult> _performApiCall() async {
-  try {
-    final http.Response resp = await http.post(
-      Uri.parse(kApiUrl),
-      headers: {'Content-Type': 'application/json'},
-      body: kPayload,
-    );
-
-    return CommandResult.success(
-      statusCode: resp.statusCode,
-      preview: _bodyPreview(resp.body),
-    );
-  } catch (e) {
-    return CommandResult.failure(e.toString());
+  await notifications.initialize(settings);
+  if (requestPermission && Platform.isAndroid) {
+    final androidPlugin = notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.requestNotificationsPermission();
   }
 }
 
-Future<void> _notify(String title, String body) async {
-  const AndroidNotificationDetails android = AndroidNotificationDetails(
-    'api_channel',
-    'API',
-    importance: Importance.defaultImportance,
-    priority: Priority.defaultPriority,
-  );
-  const DarwinNotificationDetails ios = DarwinNotificationDetails();
-  const NotificationDetails details = NotificationDetails(
-    android: android,
-    iOS: ios,
+/// ================= API =================
+
+Future<void> callApi() async {
+  final res = await http.post(
+    Uri.parse(apiUrl),
+    headers: {'Content-Type': 'application/json'},
+    body: apiPayload,
   );
 
-  await flutterLocalNotificationsPlugin.show(
+  await notifications.show(
     DateTime.now().millisecondsSinceEpoch ~/ 1000,
-    title,
-    body,
-    details,
+    'API Executada',
+    'Status: ${res.statusCode}',
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'api',
+        'API',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    ),
   );
 }
 
-Future<void> _tryNotify(String title, String body) async {
-  try {
-    await _notify(title, body);
-  } catch (_) {}
+/// ================= ALARM MANAGER =================
+
+DateTime _nextRunAt0020() {
+  final now = DateTime.now();
+  DateTime run = DateTime(now.year, now.month, now.day, 0, 20);
+  if (!run.isAfter(now)) {
+    run = run.add(const Duration(days: 1));
+  }
+  return run;
 }
 
-const Duration kMaxJitter = Duration(minutes: 10);
+Future<bool> _scheduleExactAlarm() async {
+  final when = _nextRunAt0020();
 
-DateTime _next00h05() {
-  final DateTime now = DateTime.now();
-  DateTime target = DateTime(now.year, now.month, now.day, 00, 30);
-  if (!target.isAfter(now)) {
-    target = target.add(const Duration(days: 1));
-  }
-  if (kMaxJitter.inMinutes > 0) {
-    final int jitterMinutes = _random.nextInt(kMaxJitter.inMinutes + 1);
-    target = target.add(Duration(minutes: jitterMinutes));
-  }
-  return target;
-}
-
-Future<SharedPreferences?> _safePrefs() async {
-  try {
-    return await SharedPreferences.getInstance();
-  } catch (_) {
-    return null;
-  }
-}
-
-Future<void> _persistNextTrigger(DateTime when) async {
-  final SharedPreferences? prefs = await _safePrefs();
-  await prefs?.setString(kNextTriggerPrefsKey, when.toIso8601String());
-}
-
-Future<void> _clearStoredNextTrigger() async {
-  final SharedPreferences? prefs = await _safePrefs();
-  await prefs?.remove(kNextTriggerPrefsKey);
-}
-
-Future<DateTime?> _loadStoredNextTrigger() async {
-  final SharedPreferences? prefs = await _safePrefs();
-  final String? raw = prefs?.getString(kNextTriggerPrefsKey);
-  if (raw == null || raw.isEmpty) return null;
-  try {
-    return DateTime.parse(raw);
-  } catch (_) {
-    return null;
-  }
-}
-
-Future<DateTime?> ensureDailyAlarmScheduled() async {
-  if (!Platform.isAndroid) return null;
-  DateTime? stored;
-  try {
-    stored = await _loadStoredNextTrigger();
-  } catch (_) {
-    stored = null;
-  }
-  final DateTime now = DateTime.now();
-  if (stored != null && stored.isAfter(now)) {
-    return stored;
-  }
-  try {
-    return await scheduleExactAt00h05();
-  } catch (_) {
-    return null;
-  }
-}
-
-Future<DateTime?> scheduleExactAt00h05() async {
-  if (!Platform.isAndroid) return null;
-  final DateTime when = _next00h05();
-  bool scheduled = false;
-  try {
-    scheduled =
-        await AndroidAlarmManager.oneShotAt(
-          when,
-          kAlarmId,
-          alarmCallback,
-          exact: true,
-          wakeup: true,
-          allowWhileIdle: true,
-          rescheduleOnReboot: true,
-        ) ??
-        false;
-  } catch (_) {
-    scheduled = false;
-  }
-
-  if (scheduled) {
-    await _persistNextTrigger(when);
-    return when;
-  }
-
-  await _clearStoredNextTrigger();
-  return null;
-}
-
-Future<void> openExactAlarmSettings() async {
-  if (!Platform.isAndroid) return;
-  const AndroidIntent intent = AndroidIntent(
-    action: 'android.settings.REQUEST_SCHEDULE_EXACT_ALARM',
+  final scheduled = await AndroidAlarmManager.oneShotAt(
+    when,
+    alarmId,
+    alarmCallback,
+    exact: true,
+    wakeup: true,
+    allowWhileIdle: true,
+    rescheduleOnReboot: true,
   );
 
-  await intent.launch();
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(prefsNextRun, when.toIso8601String());
+  await prefs.setBool('last_schedule_ok', scheduled);
+
+  return scheduled;
 }
 
 @pragma('vm:entry-point')
 Future<void> alarmCallback() async {
   WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-
-  const AndroidInitializationSettings android = AndroidInitializationSettings(
-    '@mipmap/ic_launcher',
-  );
-  const DarwinInitializationSettings ios = DarwinInitializationSettings();
-  const InitializationSettings initSettings = InitializationSettings(
-    android: android,
-    iOS: ios,
-  );
-
-  await flutterLocalNotificationsPlugin.initialize(initSettings);
-
-  try {
-    await _tryNotify('Comando enviado', 'Chamando a API configurada.');
-
-    final CommandResult result = await _performApiCall();
-
-    if (result.success) {
-      await _tryNotify(
-        'Resposta recebida',
-        'Status: ${result.statusCode} - ${result.preview}',
-      );
-    } else {
-      await _tryNotify(
-        'Falha ao enviar',
-        result.errorMessage ?? 'Erro desconhecido',
-      );
-    }
-  } finally {
-    await scheduleExactAt00h05();
-  }
+  await _initNotifications(requestPermission: false);
+  await callApi();
+  await _scheduleExactAlarm();
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await _initNotifications();
-
-  if (Platform.isAndroid) {
-    await AndroidAlarmManager.initialize();
-  }
-
-  runApp(const MyApp());
-}
+/// ================= UI =================
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Auto Server App',
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
-      home: const SchedulerPage(),
+      home: HomePage(),
     );
   }
 }
 
-class SchedulerPage extends StatefulWidget {
-  const SchedulerPage({super.key});
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
   @override
-  State<SchedulerPage> createState() => _SchedulerPageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _SchedulerPageState extends State<SchedulerPage> {
-  DateTime? _nextTrigger;
-  String _status = 'Preparando agendamento...';
-  bool _isScheduling = false;
+class _HomePageState extends State<HomePage> {
+  String status = 'Agendamento ativo';
+  String nextRunText = 'Carregando...';
+  String exactAlarmText = 'Alarme exato: verifique nas configuracoes';
 
   @override
   void initState() {
     super.initState();
-    _initializeSchedule();
+    _loadNextRun();
   }
 
-  Future<void> _initializeSchedule() async {
-    if (!Platform.isAndroid) {
-      setState(() {
-        _status = 'Agendamento disponivel apenas no Android.';
-      });
-      return;
-    }
-
-    setState(() {
-      _status = 'Verificando agendamento diario...';
-    });
-
-    DateTime? next;
-    try {
-      next = await ensureDailyAlarmScheduled();
-    } catch (_) {
-      next = null;
-    }
-
+  Future<void> _loadNextRun() async {
+    final prefs = await SharedPreferences.getInstance();
+    final nextRunIso = prefs.getString(prefsNextRun);
+    final lastScheduleOk = prefs.getBool('last_schedule_ok');
     if (!mounted) return;
-
-    if (next != null) {
-      setState(() {
-        _nextTrigger = next;
-        _status = 'Proximo disparo agendado para ${_formatDateTime(next!)}';
-      });
-    } else {
-      setState(() {
-        _status =
-            'Nao foi possivel agendar automaticamente. Verifique as permissoes.';
-      });
-      final DateTime? stored = await _loadStoredNextTrigger();
-      if (!mounted) return;
-      if (stored != null) {
-        setState(() {
-          _nextTrigger = stored;
-        });
-      }
-    }
+    setState(() {
+      final nextRun = nextRunIso == null
+          ? 'Sem agendamento'
+          : DateTime.parse(nextRunIso).toLocal().toString();
+      final scheduleInfo = lastScheduleOk == null
+          ? ''
+          : (lastScheduleOk ? '' : ' (falha ao agendar)');
+      nextRunText = '$nextRun$scheduleInfo';
+    });
   }
 
-  Future<void> _schedule() async {
+ void _markExactAlarmUnknown() {
+  
     setState(() {
-      _isScheduling = true;
-      _status = 'Criando agendamento diario...';
+        exactAlarmText = 'Alarme exato: verifique nas configuracoes';
     });
+  }
 
-    DateTime? scheduledAt;
-    try {
-      scheduledAt = await scheduleExactAt00h05();
-    } catch (_) {
-      scheduledAt = null;
-    }
+  Future<void> _disableBatteryOptimization() async {
+    const AndroidIntent intent = AndroidIntent(
+      action: 'android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS',
+    );
+    await intent.launch();
+  }
 
+  Future<void> _testNow() async {
+    setState(() {
+      status = 'Executando teste...';
+    });
+    await callApi();
     if (!mounted) return;
-
     setState(() {
-      _isScheduling = false;
-      if (scheduledAt != null) {
-        _nextTrigger = scheduledAt;
-        _status =
-            'Proximo disparo agendado para ${_formatDateTime(scheduledAt)}';
-      } else {
-        _status = 'Nao foi possivel agendar. Verifique as permissoes.';
-      }
+      status = 'Teste concluido';
     });
   }
 
-  Future<void> _openSettings() async {
-    await openExactAlarmSettings();
-  }
-
-  Future<void> _runNow() async {
+  Future<void> _reschedule() async {
     setState(() {
-      _status = 'Executando agora...';
+      status = 'Reagendando...';
     });
-
-    await _tryNotify('Comando enviado', 'Execucao manual iniciada.');
-
-    final CommandResult result = await _performApiCall();
-
-    if (result.success) {
-      await _tryNotify(
-        'Resposta recebida',
-        'Status: ${result.statusCode} - ${result.preview}',
-      );
-    } else {
-      await _tryNotify(
-        'Falha ao enviar',
-        result.errorMessage ?? 'Erro desconhecido',
-      );
-    }
-
-    DateTime? rescheduled;
-    if (Platform.isAndroid) {
-      try {
-        rescheduled = await scheduleExactAt00h05();
-      } catch (_) {
-        rescheduled = null;
-      }
-    }
-
+    final ok = await _scheduleExactAlarm();
+    await _loadNextRun();
+    _markExactAlarmUnknown();
     if (!mounted) return;
-
     setState(() {
-      _status = result.success
-          ? 'Comando executado manualmente. Status: ${result.statusCode}.'
-          : 'Falha ao executar manualmente: ${result.errorMessage ?? 'erro desconhecido'}';
-      if (rescheduled != null) {
-        _nextTrigger = rescheduled;
-      }
+      status = ok ? 'Agendamento atualizado' : 'Falha ao agendar';
     });
-
-    if (!result.success) {
-      final String message =
-          result.errorMessage ?? 'Falha desconhecida ao enviar o comando.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
-
-    if (Platform.isAndroid && rescheduled == null) {
-      final DateTime? stored = await _loadStoredNextTrigger();
-      if (!mounted) return;
-      if (stored != null) {
-        setState(() {
-          _nextTrigger = stored;
-        });
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Nao foi possivel reagendar automaticamente. Verifique as permissoes.',
-          ),
-        ),
-      );
-    }
   }
 
-  String _formatDateTime(DateTime dateTime) {
-    String twoDigits(int value) => value.toString().padLeft(2, '0');
-    final String day = twoDigits(dateTime.day);
-    final String month = twoDigits(dateTime.month);
-    final String hour = twoDigits(dateTime.hour);
-    final String minute = twoDigits(dateTime.minute);
-    return '$day/$month/${dateTime.year} as $hour:$minute';
+  Future<void> _openExactAlarmSettings() async {
+    const AndroidIntent intent = AndroidIntent(
+      action: 'android.settings.REQUEST_SCHEDULE_EXACT_ALARM',
+    );
+    await intent.launch();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Agendamento diario')),
+      appBar: AppBar(title: const Text('Agendamento Diario')),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(_status, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 16),
-            if (_nextTrigger != null)
-              Text(
-                'Proxima execucao: ${_formatDateTime(_nextTrigger!)}',
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-            const SizedBox(height: 32),
+            Text(status),
+            const SizedBox(height: 8),
+            Text('Proximo: $nextRunText'),
+            const SizedBox(height: 8),
+            Text(exactAlarmText),
+            const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _isScheduling ? null : _schedule,
-              child: Text(_isScheduling ? 'Agendando...' : 'Reagendar 00:30'),
+              onPressed: _openExactAlarmSettings,
+              child: const Text('Permissao de Alarme Exato'),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
-              onPressed: _openSettings,
-              child: const Text('Abrir permissoes de alarmes exatos'),
+              onPressed: _disableBatteryOptimization,
+              child: const Text('Desativar Otimizacao de Bateria'),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
-              onPressed: _runNow,
-              child: const Text('Executar agora (teste)'),
+              onPressed: _reschedule,
+              child: const Text('Reagendar Agora'),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _testNow,
+              child: const Text('Testar Notificacao'),
             ),
           ],
         ),
