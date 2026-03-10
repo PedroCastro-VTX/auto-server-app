@@ -33,8 +33,7 @@ Future<void> main() async {
 
   if (Platform.isAndroid) {
     await AndroidAlarmManager.initialize();
-
-    await _scheduleExactAlarm();
+    await _ensureScheduleOnStartup();
   }
 
   runApp(const MyApp());
@@ -60,11 +59,13 @@ Future<void> _initNotifications({bool requestPermission = true}) async {
 /// ================= API =================
 
 Future<void> callApi() async {
-  final res = await http.post(
-    Uri.parse(apiUrl),
-    headers: {'Content-Type': 'application/json'},
-    body: apiPayload,
-  );
+  final res = await http
+      .post(
+        Uri.parse(apiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: apiPayload,
+      )
+      .timeout(const Duration(seconds: 30));
 
   await notifications.show(
     DateTime.now().millisecondsSinceEpoch ~/ 1000,
@@ -83,7 +84,7 @@ Future<void> callApi() async {
 
 /// ================= ALARM MANAGER =================
 
-DateTime _nextRunAt0020() {
+DateTime _nextRunAtMidnight() {
   final now = DateTime.now();
   DateTime run = DateTime(now.year, now.month, now.day, 0, 20);
   if (!run.isAfter(now)) {
@@ -92,8 +93,26 @@ DateTime _nextRunAt0020() {
   return run;
 }
 
+Future<void> _ensureScheduleOnStartup() async {
+  final prefs = await SharedPreferences.getInstance();
+  final nextRunIso = prefs.getString(prefsNextRun);
+
+  if (nextRunIso == null) {
+    await _scheduleExactAlarm();
+    return;
+  }
+
+  final nextRun = DateTime.tryParse(nextRunIso);
+  if (nextRun == null || !nextRun.isAfter(DateTime.now())) {
+    await _scheduleExactAlarm();
+  }
+}
+
 Future<bool> _scheduleExactAlarm() async {
-  final when = _nextRunAt0020();
+  final when = _nextRunAtMidnight();
+
+  // Cancela o alarme atual para evitar duplicidades após reboot/reabertura do app.
+  await AndroidAlarmManager.cancel(alarmId);
 
   final scheduled = await AndroidAlarmManager.oneShotAt(
     when,
@@ -106,7 +125,11 @@ Future<bool> _scheduleExactAlarm() async {
   );
 
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(prefsNextRun, when.toIso8601String());
+  if (scheduled) {
+    await prefs.setString(prefsNextRun, when.toIso8601String());
+  } else {
+    await prefs.remove(prefsNextRun);
+  }
   await prefs.setBool('last_schedule_ok', scheduled);
 
   return scheduled;
@@ -116,8 +139,15 @@ Future<bool> _scheduleExactAlarm() async {
 Future<void> alarmCallback() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _initNotifications(requestPermission: false);
-  await callApi();
+
+  // Reagenda primeiro para manter o ciclo mesmo se a chamada HTTP falhar.
   await _scheduleExactAlarm();
+
+  try {
+    await callApi();
+  } catch (_) {
+    // Em caso de falha de rede/timeout, o próximo envio já está garantido.
+  }
 }
 
 /// ================= UI =================
@@ -168,10 +198,9 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
- void _markExactAlarmUnknown() {
-  
+  void _markExactAlarmUnknown() {
     setState(() {
-        exactAlarmText = 'Alarme exato: verifique nas configuracoes';
+      exactAlarmText = 'Alarme exato: verifique nas configuracoes';
     });
   }
 
@@ -253,3 +282,4 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
