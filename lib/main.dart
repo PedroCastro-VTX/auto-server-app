@@ -321,11 +321,44 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: HomePage(),
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF4F7FB),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1652B9)),
+      ),
+      home: const HomePage(),
     );
   }
+}
+
+class _PanelChip {
+  const _PanelChip(this.label, this.backgroundColor, this.textColor);
+
+  final String label;
+  final Color backgroundColor;
+  final Color textColor;
+}
+
+class _AdminPanelItem {
+  const _AdminPanelItem({
+    required this.icon,
+    required this.iconBackgroundColor,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.chips,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color iconBackgroundColor;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final List<_PanelChip> chips;
+  final Future<void> Function() onTap;
 }
 
 class HomePage extends StatefulWidget {
@@ -348,6 +381,24 @@ class _HomePageState extends State<HomePage> {
     _loadNextRun();
   }
 
+  String _formatDateTime(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+  }
+
+  bool get _isScheduleHealthy {
+    final text = nextRunText.toLowerCase();
+    return !text.contains('falha') && !text.contains('sem agendamento');
+  }
+
+  bool get _isApiHealthy {
+    final text = status.toLowerCase();
+    return !text.contains('falha') && !text.contains('erro');
+  }
+
+  bool get _isNotificationHealthy =>
+      lastNotificationErrorText.toLowerCase().endsWith('nenhum');
+
   Future<void> _loadNextRun() async {
     final prefs = await SharedPreferences.getInstance();
     final nextRunIso = prefs.getString(prefsNextRun);
@@ -359,9 +410,11 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     setState(() {
-      final nextRun = nextRunIso == null
+      final parsedNextRun =
+          nextRunIso == null ? null : DateTime.tryParse(nextRunIso)?.toLocal();
+      final nextRun = parsedNextRun == null
           ? 'Sem agendamento'
-          : DateTime.parse(nextRunIso).toLocal().toString();
+          : _formatDateTime(parsedNextRun);
 
       final scheduleInfo = lastScheduleOk == null
           ? ''
@@ -476,49 +529,521 @@ class _HomePageState extends State<HomePage> {
     await intent.launch();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Agendamento Diario')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: SingleChildScrollView(
+  Future<void> _openQuickActionsSheet() async {
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(status),
-              const SizedBox(height: 8),
-              Text('Proximo: $nextRunText'),
-              const SizedBox(height: 8),
-              Text(exactAlarmText),
-              const SizedBox(height: 8),
-              Text(lastApiText),
-              const SizedBox(height: 8),
-              Text(lastNotificationErrorText),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _openExactAlarmSettings,
-                child: const Text('Permissao de Alarme Exato'),
+              ListTile(
+                leading: const Icon(Icons.alarm_rounded),
+                title: const Text('Permissao de Alarme Exato'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openExactAlarmSettings();
+                },
               ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _disableBatteryOptimization,
-                child: const Text('Desativar Otimizacao de Bateria'),
+              ListTile(
+                leading: const Icon(Icons.battery_saver_rounded),
+                title: const Text('Desativar Otimizacao de Bateria'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _disableBatteryOptimization();
+                },
               ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _reschedule,
-                child: const Text('Reagendar Agora'),
+              ListTile(
+                leading: const Icon(Icons.update_rounded),
+                title: const Text('Reagendar Agora'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _reschedule();
+                },
               ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _testNow,
-                child: const Text('Testar Notificacao'),
+              ListTile(
+                leading: const Icon(Icons.notifications_active_rounded),
+                title: const Text('Testar Notificacao'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _testNow();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  List<_AdminPanelItem> _buildPanelItems() {
+    final scheduleHealthy = _isScheduleHealthy;
+    final apiHealthy = _isApiHealthy;
+    final notificationHealthy = _isNotificationHealthy;
+
+    return [
+      _AdminPanelItem(
+        icon: Icons.event_repeat_rounded,
+        iconBackgroundColor: const Color(0xFFDDE8FF),
+        iconColor: const Color(0xFF1C4AA8),
+        title: 'Agendamento Diario',
+        subtitle: nextRunText,
+        chips: [
+          _PanelChip(
+            scheduleHealthy ? 'Ativo' : 'Atencao',
+            scheduleHealthy ? const Color(0xFFE9F5DD) : const Color(0xFFFFF2DB),
+            scheduleHealthy ? const Color(0xFF4E7A13) : const Color(0xFF9C6A08),
+          ),
+        ],
+        onTap: _reschedule,
+      ),
+      _AdminPanelItem(
+        icon: Icons.cloud_sync_rounded,
+        iconBackgroundColor: const Color(0xFFD9F3EC),
+        iconColor: const Color(0xFF046A56),
+        title: 'Status da API',
+        subtitle: status,
+        chips: [
+          _PanelChip(
+            apiHealthy ? 'Ativo' : 'Offline',
+            apiHealthy ? const Color(0xFFE9F5DD) : const Color(0xFFFFE2E0),
+            apiHealthy ? const Color(0xFF4E7A13) : const Color(0xFF9E2B2B),
+          ),
+          const _PanelChip(
+            'Teste',
+            Color(0xFFECE8FF),
+            Color(0xFF5A49CC),
+          ),
+        ],
+        onTap: _testNow,
+      ),
+      _AdminPanelItem(
+        icon: Icons.notifications_active_rounded,
+        iconBackgroundColor: const Color(0xFFFFEACC),
+        iconColor: const Color(0xFF9B5400),
+        title: 'Notificacoes',
+        subtitle: notificationHealthy
+            ? 'Sem erros recentes'
+            : lastNotificationErrorText.replaceFirst('Erro de notificacao: ', ''),
+        chips: [
+          _PanelChip(
+            notificationHealthy ? 'Ativo' : 'Falha',
+            notificationHealthy ? const Color(0xFFE9F5DD) : const Color(0xFFFFE2E0),
+            notificationHealthy ? const Color(0xFF4E7A13) : const Color(0xFF9E2B2B),
+          ),
+          const _PanelChip(
+            'Sistema',
+            Color(0xFFECE8FF),
+            Color(0xFF5A49CC),
+          ),
+        ],
+        onTap: _openQuickActionsSheet,
+      ),
+      _AdminPanelItem(
+        icon: Icons.settings_suggest_rounded,
+        iconBackgroundColor: const Color(0xFFE7EBF3),
+        iconColor: const Color(0xFF40546B),
+        title: 'Permissoes',
+        subtitle: exactAlarmText,
+        chips: const [
+          _PanelChip(
+            'Configurar',
+            Color(0xFFECE8FF),
+            Color(0xFF5A49CC),
+          ),
+        ],
+        onTap: _openExactAlarmSettings,
+      ),
+    ];
+  }
+
+  Widget _buildHeroCard() {
+    final allHealthy = _isScheduleHealthy && _isApiHealthy && _isNotificationHealthy;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0D2F70), Color(0xFF1652B9)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.admin_panel_settings_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'Athena Disparo Diário',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Monitoramento de automacao',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 32 / 2,
+              height: 1.35,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Acompanhe API, notificacoes e agendamento diario em uma visao unica.',
+            style: TextStyle(
+              color: Color(0xFFD8E5FF),
+              fontSize: 17 / 2,
+              height: 1.45,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              allHealthy ? 'Operacao estavel' : 'Atencao em diagnosticos',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            lastApiText,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverviewStrip() {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildOverviewPill(
+            icon: Icons.schedule_rounded,
+            label: 'Agenda',
+            healthy: _isScheduleHealthy,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _buildOverviewPill(
+            icon: Icons.lan_rounded,
+            label: 'API',
+            healthy: _isApiHealthy,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _buildOverviewPill(
+            icon: Icons.notifications_rounded,
+            label: 'Notif',
+            healthy: _isNotificationHealthy,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverviewPill({
+    required IconData icon,
+    required String label,
+    required bool healthy,
+  }) {
+    final backgroundColor =
+        healthy ? const Color(0xFFE6F4E9) : const Color(0xFFFFEFEA);
+    final foregroundColor =
+        healthy ? const Color(0xFF1E6A2A) : const Color(0xFFA73E1B);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: foregroundColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '$label ${healthy ? 'ok' : 'falha'}',
+              style: TextStyle(
+                color: foregroundColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle() {
+    return const Text(
+      'Controles e diagnostico',
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+        color: Color(0xFF4E5566),
+        letterSpacing: 0.1,
+      ),
+    );
+  }
+
+  Widget _buildBottomActionBar() {
+    return SafeArea(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+        color: Colors.white,
+        child: Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 50,
+                child: OutlinedButton.icon(
+                  onPressed: _reschedule,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF244B9B),
+                    side: const BorderSide(color: Color(0xFFC6D6F6)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.update_rounded, size: 20),
+                  label: const Text(
+                    'Reagendar',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: _testNow,
+                  style: ElevatedButton.styleFrom(
+                    elevation: 0,
+                    backgroundColor: const Color(0xFF1652B9),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.play_arrow_rounded, size: 22),
+                  label: const Text(
+                    'Testar API',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemCard(_AdminPanelItem item) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: item.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE7E7EE)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: item.iconBackgroundColor,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  item.icon,
+                  color: item.iconColor,
+                  size: 23,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF2B2B39),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      item.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF85859A),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: item.chips
+                          .map(
+                            (chip) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: chip.backgroundColor,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                chip.label,
+                                style: TextStyle(
+                                  color: chip.textColor,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFB8B8C7),
+                size: 24,
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _buildPanelItems();
+
+    return Scaffold(
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: const Color(0xFFF4F7FB),
+        leading: IconButton(
+          onPressed: _openQuickActionsSheet,
+          icon: const Icon(Icons.menu_rounded, color: Color(0xFF2A2A37)),
+        ),
+        title: const Text(
+          'Athena Admin',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A2A37),
+          ),
+        ),
+        actions: [
+          IconButton(
+            onPressed: _loadNextRun,
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF2A2A37)),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadNextRun,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+          children: [
+            _buildHeroCard(),
+            const SizedBox(height: 16),
+            _buildOverviewStrip(),
+            const SizedBox(height: 14),
+            _buildSectionTitle(),
+            const SizedBox(height: 10),
+            ...items.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _buildItemCard(item),
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: _buildBottomActionBar(),
     );
   }
 }
