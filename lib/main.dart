@@ -1008,7 +1008,7 @@ class _HomePageState extends State<HomePage> {
           icon: const Icon(Icons.menu_rounded, color: Color(0xFF2A2A37)),
         ),
         title: const Text(
-          'Athena Admin',
+          'Athena Disparo Diário',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
